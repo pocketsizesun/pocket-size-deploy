@@ -1,0 +1,274 @@
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  ImageTag:
+    Type: String
+    Description: Repository image tag to use
+Resources:
+  <% @service_definitions.each_value do |service_definition| %>
+  <% environment_variables = @configuration.environment.merge(service_definition.environment) %>
+  <%= service_definition.cf_task_definition_resource_id %>:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ExecutionRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/<%= service_definition.task_execution_role_name || @configuration.task_execution_role_name %>
+      Family: <%= @configuration.name %>_service_<%= service_definition.name %>
+      NetworkMode: <%= service_definition.network_mode %>
+      <% unless service_definition.cpu.nil? %>
+      Cpu: <%= service_definition.cpu %>
+      <% end %>
+      <% unless service_definition.memory.nil? %>
+      Memory: <%= service_definition.memory %>
+      <% end %>
+      <% if service_definition.launch_type == 'FARGATE' %>
+      EphemeralStorage:
+        SizeInGiB: <%= service_definition.ephemeral_storage_size %>
+      <% end %>
+      <% unless service_definition.launch_type.nil? %>
+      RequiresCompatibilities:
+        - <%= service_definition.launch_type %>
+      <% end %>
+      RuntimePlatform:
+        CpuArchitecture: <%= @configuration.image.arch.upcase %>
+        OperatingSystemFamily: <%= @configuration.image.os.upcase %>
+      TaskRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/<%= service_definition.task_role_name || @configuration.task_role_name %>
+      ContainerDefinitions:
+        -
+          Name: default
+          Essential: true
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/<%= @configuration.name %>:${ImageTag}
+          <% if !@configuration.image.entrypoint.nil? || !service_definition.entrypoint.nil? %>
+          EntryPoint: <%= service_definition.entrypoint&.to_json || @configuration.image.entrypoint.to_json %>
+          <% end %>
+          <% unless service_definition.command.nil? %>
+          Command: <%= service_definition.command.to_json %>
+          <% end %>
+          <% unless @configuration.secrets.nil? %>
+          Secrets:
+            <% @configuration.secrets.parameters.each do |parameter_name| %>
+            -
+              Name: "<%= parameter_name %>"
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/<%= @configuration.secrets.prefix || @configuration.name %>/<%= parameter_name %>
+            <% end %>
+          <% end %>
+          <% unless service_definition.port_mappings.empty? %>
+          PortMappings:
+            <% service_definition.port_mappings.each do |port_mapping| %>
+            -
+              Name: "<%= port_mapping.name || "#{port_mapping.app_protocol.downcase}-#{port_mapping.container_port}" %>"
+              AppProtocol: <%= port_mapping.app_protocol %>
+              ContainerPort: <%= port_mapping.container_port %>
+              <% unless port_mapping.host_port.nil? %>
+              HostPort: <%= port_mapping.host_port %>
+              <% end %>
+              Protocol: <%= port_mapping.protocol %>
+            <% end %>
+          <% end %>
+          <% unless environment_variables.empty? %>
+          Environment:
+            <% environment_variables.each do |key, value| %>
+            -
+              Name: <%= key.to_s.to_json %>
+              Value: <%= value.to_s.to_json %>
+            <% end %>
+          <% end %>
+          LinuxParameters:
+            InitProcessEnabled: <%= service_definition.init_process_enabled? ? 'True' : 'False' %>
+            <% if !service_definition.swap_size.nil? && service_definition.launch_type != 'FARGATE' %>
+            MaxSwap: <%= service_definition.swap_size %>
+            Swappiness: <%= service_definition.swappiness %>
+            <% end %>
+            <% unless service_definition.shared_memory_size.nil? %>
+            SharedMemorySize: <%= service_definition.shared_memory_size %>
+            <% end %>
+          <% unless service_definition.system_controls.empty? %>
+          SystemControls:
+            <% service_definition.system_controls.each do |name, value| %>
+            - { Namespace: "<%= name %>", Value: <%= value.to_s.to_json %> }
+            <% end %>
+          <% end %>
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              "awslogs-group": "/ecs/<%= @configuration.cluster %>"
+              "awslogs-region": !Ref AWS::Region
+              "awslogs-create-group": "true"
+              "mode": "non-blocking"
+              "awslogs-stream-prefix": "<%= @configuration.name %>/services/<%= service_definition.name %>"
+      Tags:
+        - { Key: "Name", Value: "<%= @configuration.name %>_<%= service_definition.name %>" }
+        - { Key: "AppName", Value: "<%= @configuration.name %>" }
+        - { Key: "ServiceName", Value: "<%= service_definition.name %>" }
+
+  <%= service_definition.cf_resource_id %>:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: <%= @configuration.cluster %>
+      # ServiceName: <%= @configuration.name %>_<%= service_definition.name %>
+      TaskDefinition: !Ref <%= service_definition.cf_task_definition_resource_id %>
+      DesiredCount: <%= service_definition.count %>
+      # EnableExecuteCommand: Boolean
+      <% if !service_definition.capacity_provider_strategies.empty? %>
+      CapacityProviderStrategy:
+        <% service_definition.capacity_provider_strategies.each do |strategy| %>
+        - { CapacityProvider: "<%= strategy.name %>", Base: <%= strategy.base %>, Weight: <%= strategy.weight %> }
+        <% end %>
+      <% elsif !service_definition.launch_type.nil? %>
+      LaunchType: <%= service_definition.launch_type %>
+      <% end %>
+      <% unless service_definition.load_balancers.empty? %>
+      HealthCheckGracePeriodSeconds: <%= service_definition.health_check_grace_period %>
+      <% if service_definition.network_mode != 'awsvpc' %>
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS
+      <% end %>
+      LoadBalancers:
+        <% service_definition.load_balancers.each do |load_balancer| %>
+        -
+          ContainerName: default
+          ContainerPort: <%= load_balancer.port %>
+          TargetGroupArn: <%= load_balancer.target_group_arn %>
+        <% end %>
+      <% end %>
+      <% if service_definition.network_mode == 'awsvpc' %>
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            <% @configuration.vpc.security_groups.each do |security_group| %>
+            - <%= security_group %>
+            <% end %>
+          Subnets:
+            <% @configuration.vpc.subnets.each do |subnet| %>
+            - <%= subnet %>
+            <% end %>
+      <% end %>
+      SchedulingStrategy: REPLICA
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: True
+          Rollback: True
+        MinimumHealthyPercent: <%= service_definition.deployment_configuration.minimum_percentage %>
+        MaximumPercent: <%= service_definition.deployment_configuration.maximum_percentage %>
+      Tags:
+        - { Key: "Name", Value: "<%= @configuration.name %>_<%= service_definition.name %>" }
+        - { Key: "AppName", Value: "<%= @configuration.name %>" }
+        - { Key: "ServiceName", Value: "<%= service_definition.name %>" }
+  <% end %>
+
+  <% @scheduled_task_definitions.each_value do |scheduled_task_definition| %>
+  <% environment_variables = @configuration.environment.merge(scheduled_task_definition.environment) %>
+  <%= scheduled_task_definition.cf_task_definition_resource_id %>:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ExecutionRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/<%= scheduled_task_definition.task_execution_role_name || @configuration.task_execution_role_name %>
+      Family: <%= @configuration.name %>_scheduledtask_<%= scheduled_task_definition.name %>
+      NetworkMode: <%= scheduled_task_definition.network_mode %>
+      <% unless scheduled_task_definition.cpu.nil? %>
+      Cpu: <%= scheduled_task_definition.cpu %>
+      <% end %>
+      <% unless scheduled_task_definition.memory.nil? %>
+      Memory: <%= scheduled_task_definition.memory %>
+      <% end %>
+      <% if scheduled_task_definition.launch_type == 'FARGATE' %>
+      EphemeralStorage:
+        SizeInGiB: <%= scheduled_task_definition.ephemeral_storage_size %>
+      <% end %>
+      <% unless scheduled_task_definition.launch_type.nil? %>
+      RequiresCompatibilities:
+        - <%= scheduled_task_definition.launch_type %>
+      <% end %>
+      RuntimePlatform:
+        CpuArchitecture: <%= @configuration.image.arch.upcase %>
+        OperatingSystemFamily: <%= @configuration.image.os.upcase %>
+      TaskRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/<%= scheduled_task_definition.task_role_name || @configuration.task_role_name %>
+      ContainerDefinitions:
+        -
+          Name: default
+          Essential: true
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/<%= @configuration.name %>:${ImageTag}
+          <% if !@configuration.image.entrypoint.nil? || !scheduled_task_definition.entrypoint.nil? %>
+          EntryPoint: <%= scheduled_task_definition.entrypoint&.to_json || @configuration.image.entrypoint.to_json %>
+          <% end %>
+          <% unless scheduled_task_definition.command.nil? %>
+          Command: <%= scheduled_task_definition.command.to_json %>
+          <% end %>
+          <% unless @configuration.secrets.nil? %>
+          Secrets:
+            <% @configuration.secrets.parameters.each do |parameter_name| %>
+            -
+              Name: "<%= parameter_name %>"
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/<%= @configuration.secrets.prefix || @configuration.name %>/<%= parameter_name %>
+            <% end %>
+          <% end %>
+          <% unless scheduled_task_definition.port_mappings.empty? %>
+          PortMappings:
+            <% scheduled_task_definition.port_mappings.each do |port_mapping| %>
+            -
+              AppProtocol: <%= port_mapping.app_protocol %>
+              ContainerPort: <%= port_mapping.container_port %>
+              <% unless port_mapping.host_port.nil? %>
+              HostPort: <%= port_mapping.host_port %>
+              <% end %>
+              Protocol: <%= port_mapping.protocol %>
+            <% end %>
+          <% end %>
+          <% unless environment_variables.empty? %>
+          Environment:
+            <% environment_variables.each do |key, value| %>
+            -
+              Name: <%= key.to_s.to_json %>
+              Value: <%= value.to_s.to_json %>
+            <% end %>
+          <% end %>
+          LinuxParameters:
+            InitProcessEnabled: <%= scheduled_task_definition.init_process_enabled? ? 'True' : 'False' %>
+            <% if !scheduled_task_definition.swap_size.nil? && scheduled_task_definition.launch_type != 'FARGATE' %>
+            MaxSwap: <%= scheduled_task_definition.swap_size %>
+            Swappiness: <%= scheduled_task_definition.swappiness %>
+            <% end %>
+            <% unless scheduled_task_definition.shared_memory_size.nil? %>
+            SharedMemorySize: <%= scheduled_task_definition.shared_memory_size %>
+            <% end %>
+          <% unless scheduled_task_definition.system_controls.empty? %>
+          SystemControls:
+            <% scheduled_task_definition.system_controls.each do |name, value| %>
+            - { Namespace: "<%= name %>", Value: <%= value.to_s.to_json %> }
+            <% end %>
+          <% end %>
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              "awslogs-group": "/ecs/<%= @configuration.cluster %>"
+              "awslogs-region": !Ref AWS::Region
+              "awslogs-create-group": "true"
+              "mode": "non-blocking"
+              "awslogs-stream-prefix": "<%= @configuration.name %>/scheduled_tasks/<%= scheduled_task_definition.name %>"
+      Tags:
+        - { Key: "Name", Value: "<%= @configuration.name %>_<%= scheduled_task_definition.name %>" }
+        - { Key: "AppName", Value: "<%= @configuration.name %>" }
+        - { Key: "ServiceName", Value: "<%= scheduled_task_definition.name %>" }
+
+  <%= scheduled_task_definition.cf_resource_id %>:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: default
+      # Name: <%= @configuration.name %>_<%= scheduled_task_definition.name %>
+      Description: |
+        <%= @configuration.name %> | <%= scheduled_task_definition.name %>
+      ScheduleExpression: <%= scheduled_task_definition.schedule_expression %>
+      State: <%= scheduled_task_definition.enabled? ? 'ENABLED' : 'DISABLED' %>
+      Targets:
+        - Id: default
+          Arn: !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:cluster/<%= @configuration.cluster %>
+          RoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/ecsEventsRole
+          Input: !Sub |
+            {
+              "taskRoleArn": "arn:aws:iam::${AWS::AccountId}:role/<%= scheduled_task_definition.task_role_name || @configuration.task_role_name %>"
+            }
+          EcsParameters:
+            TaskDefinitionArn: !Ref <%= scheduled_task_definition.cf_task_definition_resource_id %>
+            TaskCount: <%= scheduled_task_definition.count %>
+            <% unless scheduled_task_definition.launch_type.nil? %>
+            LaunchType: <%= scheduled_task_definition.launch_type %>
+            <% end %>
+            EnableECSManagedTags: false
+            EnableExecuteCommand: false
+  <% end %>

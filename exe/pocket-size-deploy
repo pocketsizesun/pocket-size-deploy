@@ -1,0 +1,48 @@
+#!/usr/bin/env ruby
+
+require_relative '../lib/pocket_size/deploy'
+require 'optparse'
+
+@options = {
+  dry_run: false,
+  skip_deploy: false,
+  skip_container: false,
+  rebuild: false,
+  force: false,
+  dev_build_number: true
+}
+configuration_path = 'config/deploy.yml'
+
+OptionParser.new do |opts|
+  opts.on('-c', '--config-file=FILE', 'Configuration file path, default: config/deploy.yml') do |v|
+    configuration_path = v
+  end
+
+  opts.on('--dry-run') do
+    @options[:dry_run] = true
+  end
+
+  opts.on('--skip-container') do
+    @options[:skip_container] = true
+  end
+
+  opts.on('--skip-deploy') do
+    @options[:skip_deploy] = true
+  end
+
+  opts.on('--rebuild') do
+    @options[:rebuild] = true
+  end
+
+  opts.on('--force') do
+    @options[:force] = true
+  end
+
+  opts.on('--no-dev-build-number') do
+    @options[:dev_build_number] = false
+  end
+end.parse!
+
+app_version = ARGV.shift
+
+PocketSize::Deploy::Deployment.deploy!(app_version, configuration_path, **@options)
