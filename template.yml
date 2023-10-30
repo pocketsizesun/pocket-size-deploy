@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: 2010-09-09
+Resources:
+
+  O5SWETD:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ExecutionRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/TiktEcsTaskExecutionRole
+      Family: tikt-application-website_web
+      NetworkMode: awsvpc
+      Cpu: 512
+      Memory: 1024
+
+      EphemeralStorage:
+        SizeInGiB: 21
+
+      RequiresCompatibilities:
+        - FARGATE
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      TaskRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/TiktDefaultECSTaskRole
+      ContainerDefinitions:
+        -
+          Name: default
+          Essential: true
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/tikt-application-website:1.0.0
+
+          EntryPoint: ./docker/entrypoints/default.sh
+
+
+          Command: ["bundle","exec","puma"]
+
+          Secrets:
+
+            -
+              name: "TIKT_EVENTS_TOPIC"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/TIKT_EVENTS_TOPIC
+
+            -
+              name: "TIKT_IAM_ENDPOINT"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/TIKT_IAM_ENDPOINT
+
+            -
+              name: "RAILS_ENV"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/RAILS_ENV
+
+            -
+              name: "SECRET_KEY_BASE"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/SECRET_KEY_BASE
+
+            -
+              name: "GOOGLE_MAPS_API_KEY"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/GOOGLE_MAPS_API_KEY
+
+            -
+              name: "JWT_SECRET_KEY"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/JWT_SECRET_KEY
+
+            -
+              name: "TIKT_ACCESS_KEY_ID"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/TIKT_ACCESS_KEY_ID
+
+            -
+              name: "TIKT_ACCESS_SECRET_KEY"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/TIKT_ACCESS_SECRET_KEY
+
+            -
+              name: "MONGODB_URL"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/MONGODB_URL
+
+            -
+              name: "PARTNER_TRACKERS_SIGN_KEY"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/PARTNER_TRACKERS_SIGN_KEY
+
+            -
+              name: "REDIS_URL"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/REDIS_URL
+
+            -
+              name: "SENDGRID_API_KEY"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/SENDGRID_API_KEY
+
+            -
+              name: "SENDGRID_COREGISTRATION_API_KEY"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/SENDGRID_COREGISTRATION_API_KEY
+
+            -
+              name: "SENDGRID_COREGISTRATION_TUNNEL_API_KEY"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/SENDGRID_COREGISTRATION_TUNNEL_API_KEY
+
+            -
+              name: "SENDGRID_WIA_DEFAULT_API_KEY"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/SENDGRID_WIA_DEFAULT_API_KEY
+
+            -
+              name: "COREGISTRATION_SENDGRID_API_KEY"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/COREGISTRATION_SENDGRID_API_KEY
+
+            -
+              name: "COREGISTRATION_TUNNEL_SENDGRID_API_KEY"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/COREGISTRATION_TUNNEL_SENDGRID_API_KEY
+
+            -
+              name: "SLACK_WEB_TOKEN"
+              valueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/tikt-application-website/SLACK_WEB_TOKEN
+
+
+  O5SWESRV:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: tikt
+      ServiceName: tikt-application-website_web
+      TaskDefinition: !Ref O5SWETD
+      DesiredCount: 1
+      # EnableExecuteCommand: Boolean
+      HealthCheckGracePeriodSeconds: 10
+      LaunchType: FARGATE
+      LoadBalancers:
+        -
+          ContainerName: default
+          ContainerPort: 8014
+          TargetGroupArn: arn:aws:elasticloadbalancing:eu-west-3:536798017135:loadbalancer/app/tikt-alb-public/36adfb8ab2351e5a
+      NetworkConfiguration:
+        AwsVpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+
+            - sg-0349980e217a08ae3
+
+          Subnets:
+
+            - subnet-0846d3b92d2c7b6f5
+
+            - subnet-00187639189c2acc0
+
+            - subnet-08b99fa7e540f7dec
+
+      SchedulingStrategy: REPLICA

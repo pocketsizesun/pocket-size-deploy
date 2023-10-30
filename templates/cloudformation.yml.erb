@@ -1,0 +1,81 @@
+AWSTemplateFormatVersion: 2010-09-09
+Resources:
+  <% @service_definitions.each do |service_definition| %>
+  <%= service_definition.cf_task_definition_resource_id %>:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ExecutionRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/<%= service_definition.task_execution_role_name || @configuration.task_execution_role_name %>
+      Family: <%= @configuration.name %>_<%= service_definition.name %>
+      NetworkMode: awsvpc
+      Cpu: <%= service_definition.cpu %>
+      Memory: <%= service_definition.memory %>
+      <% if service_definition.ephemeral_storage_size %>
+      EphemeralStorage:
+        SizeInGiB: <%= service_definition.ephemeral_storage_size %>
+      <% end %>
+      RequiresCompatibilities:
+        - FARGATE
+      RuntimePlatform:
+        CpuArchitecture: <%= @configuration.image.cpu_arch %>
+        OperatingSystemFamily: <%= @configuration.image.os_family %>
+      TaskRoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/<%= service_definition.task_role_name || @configuration.task_role_name %>
+      ContainerDefinitions:
+        -
+          Name: default
+          Essential: true
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/<%= @configuration.name %>:<%= @configuration.version %>
+          <% if !@configuration.image.entrypoint.nil? || !service_definition.entrypoint.nil? %>
+          EntryPoint: <%= @configuration.image.entrypoint || service_definition.entrypoint.to_json %>
+          <% end %>
+          <% unless service_definition.command.nil? %>
+          Command: <%= service_definition.command.to_json %>
+          <% end %>
+          Secrets:
+            <% @configuration.secrets.each do |secret_name, secret_value| %>
+            -
+              Name: "<%= secret_name %>"
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/<%= @configuration.name %>/<%= secret_name %>
+            <% end %>
+          <% unless service_definition.port_mappings.empty? %>
+          PortMappings:
+            <% service_definition.port_mappings.each do |port_mapping| %>
+            -
+              AppProtocol: <%= port_mapping.app_protocol %>
+              ContainerPort: <%= port_mapping.container_port %>
+              HostPort: <%= port_mapping.host_port %>
+              Protocol: <%= port_mapping.protocol %>
+            <% end %>
+          <% end %>
+
+  <%= service_definition.cf_service_resource_id %>:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: <%= @configuration.cluster %>
+      ServiceName: <%= @configuration.name %>_<%= service_definition.name %>
+      TaskDefinition: !Ref <%= service_definition.cf_task_definition_resource_id %>
+      DesiredCount: <%= service_definition.count %>
+      # EnableExecuteCommand: Boolean
+      HealthCheckGracePeriodSeconds: 10
+      LaunchType: FARGATE
+      <% unless service_definition.load_balancers.empty? %>
+      LoadBalancers:
+        <% service_definition.load_balancers.each do |load_balancer| %>
+        -
+          ContainerName: default
+          ContainerPort: <%= load_balancer.port %>
+          TargetGroupArn: <%= load_balancer.target_group %>
+        <% end %>
+      <% end %>
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            <% @configuration.vpc.security_groups.each do |security_group| %>
+            - <%= security_group %>
+            <% end %>
+          Subnets:
+            <% @configuration.vpc.subnets.each do |subnet| %>
+            - <%= subnet %>
+            <% end %>
+      SchedulingStrategy: REPLICA
+  <% end %>
