@@ -22,6 +22,10 @@ module PocketSize
           @configuration_path
         )
 
+        if @configuration.version.nil?
+          abort 'YOU MUST SPECIFY A VERSION IN THE DEPLOY CONFIGURATION'
+        end
+
         # if app version is a dev one, append build number to it
         if Gem::Version.new(@configuration.version).segments.last == 'dev'
           @configuration.version = "#{@configuration.version}.#{Time.now.strftime('%Y%m%d%H%M%S')}"

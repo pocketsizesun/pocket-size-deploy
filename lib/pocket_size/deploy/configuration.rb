@@ -16,7 +16,7 @@ module PocketSize
       attribute :cluster, :string
 
       # @!attribute version
-      #   @return [String]
+      #   @return [String, nil]
       attribute :version, :string
 
       # @!attribute task_execution_role_name
