@@ -11,13 +11,8 @@ require 'optparse'
   force: false,
   dev_build_number: true
 }
-configuration_path = 'config/deploy.yml'
 
 OptionParser.new do |opts|
-  opts.on('-c', '--config-file=FILE', 'Configuration file path, default: config/deploy.yml') do |v|
-    configuration_path = v
-  end
-
   opts.on('--dry-run') do
     @options[:dry_run] = true
   end
@@ -43,6 +38,15 @@ OptionParser.new do |opts|
   end
 end.parse!
 
-app_version = ARGV.shift
+command = ARGV.shift
 
-PocketSize::Deploy::Deployment.deploy!(app_version, configuration_path, **@options)
+case command
+when 'deploy'
+  config_path = ARGV.shift
+  if config_path.nil?
+    abort 'Missing configuration path as second argument. Usage: pocket-size-deploy deploy ./path/to/deploy/config.yml'
+  end
+  PocketSize::Deploy::Deployment.deploy!(config_path, **@options)
+else
+  abort "Unknown command: #{command}"
+end
