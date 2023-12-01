@@ -3,8 +3,8 @@
 module PocketSize
   module Deploy
     class Deployment
-      def self.deploy!(app_version, configuration_path, **kwargs)
-        new(app_version, configuration_path, **kwargs).deploy!
+      def self.deploy!(configuration_path, **kwargs)
+        new(configuration_path, **kwargs).deploy!
       end
 
       def initialize(configuration_path, dry_run: false, skip_container: false, skip_deploy: false, rebuild: false, force: false, dev_build_number: true)
