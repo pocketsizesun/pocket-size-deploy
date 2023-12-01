@@ -7,8 +7,7 @@ module PocketSize
         new(app_version, configuration_path, **kwargs).deploy!
       end
 
-      def initialize(configuration_path, app_version: nil, dry_run: false, skip_container: false, skip_deploy: false, rebuild: false, force: false, dev_build_number: true)
-        @app_version = app_version
+      def initialize(configuration_path, dry_run: false, skip_container: false, skip_deploy: false, rebuild: false, force: false, dev_build_number: true)
         @configuration_path = configuration_path
         @dry_run = dry_run
         @skip_container = skip_container
@@ -22,8 +21,6 @@ module PocketSize
         @configuration = PocketSize::Deploy::Configuration.from_file(
           @configuration_path
         )
-
-        @configuration.version = @app_version unless @app_version.nil?
 
         # if app version is a dev one, append build number to it
         if Gem::Version.new(@configuration.version).segments.last == 'dev'
